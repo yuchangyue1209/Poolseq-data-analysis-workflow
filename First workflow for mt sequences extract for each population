@@ -1,0 +1,37 @@
+#  BBduk trim
+bbduk.sh in1=/work/cyu/poolseq/raw_data/17_SAY_R1_001.fastq \
+in2=/work/cyu/poolseq/raw_data/17_SAY_R2_001.fastq \
+out1=/work/cyu/poolseq/PPalign_output/trimmed/trimmed_R1_SAY.fastq \
+out2=/work/cyu/poolseq/PPalign_output/trimmed/trimmed_R2_SAY.fastq \
+qtrim=rl trimq=20 minlength=25 ftl=10 ftr=150 tossbrokenreads=t threads=$THREADZ
+
+#FastQC
+fastqc /work/cyu/poolseq/PPalign_output/trimmed/trimmed_R1_WT.fastq /work/cyu/poolseq/PPalign_output/trimmed/trimmed_R2_WT.fastq -o /work/cyu/poolseq/PPalign_output/quality/
+
+#Align
+bwa mem -t 48 /home/cyu/poolparty/stickleback_v5_assembly.fa /work/cyu/poolseq/PPalign_output/trimmed/trimmed_R1_ROB.fastq /work/cyu/poolseq/PPalign_output/trimmed/trimmed_R2_ROB.fastq | samblaster | samtools view -Sb -q 10 > /work/cyu/poolseq/PPalign_output/mapped/output_ROB.bam
+#sort and index
+samtools sort -@ 48 -o /work/cyu/poolseq/PPalign_output/mapped/output_sorted_ROB.bam /work/cyu/poolseq/PPalign_output/mapped/output_ROB.bam
+samtools index /work/cyu/poolseq/PPalign_output/mapped/output_sorted_ROB.bam
+
+# Extract mtDNA 
+samtools view -b /work/cyu/poolseq/PPalign_output/mapped/output_sorted_ROB.bam chrM > /work/cyu/poolseq/PPalign_output/mapped/mtDNA_ROB.bam
+
+# Sort extracted mtDNA again
+samtools sort -m 8G -@ 48 -T /work/cyu/poolseq/PPalign_output/temp /work/cyu/poolseq/PPalign_output/mapped/mtDNA_ROB.bam -o /work/cyu/poolseq/PPalign_output/mapped/mtDNA_sorted_ROB.bam
+samtools index /work/cyu/poolseq/PPalign_output/mapped/mtDNA_sorted_ROB.bam
+
+# SAMtools mpileup with quality filters
+samtools mpileup -q 10 -Q 20 -d 1000 -f /home/cyu/poolparty/stickleback_v5_assembly.fa \
+/work/cyu/poolseq/PPalign_output/mapped/mtDNA_sorted_ROB.bam > /work/cyu/poolseq/PPalign_output/mapped/mtDNA_ROB.mpileup
+
+# BCFtools mtDNA variant calling with INWIN, MAF, and DP filters
+bcftools call -mv -f GQ,GP -m -O z -o /work/cyu/poolseq/PPalign_output/mapped/mtDNA_ROB.vcf.gz \
+/work/cyu/poolseq/PPalign_output/mapped/mtDNA_ROB.mpileup --min-AF 0.00005 -i 'DP>10' --indel-gap 2 -@ 48
+
+# Sort VCF for downstream processing
+tabix -p vcf /work/cyu/poolseq/PPalign_output/mapped/mtDNA_ROB.vcf.gz
+
+# Extract mtDNA from reference genome
+grep -A 1000000 "^>chrM" /work/cyu/poolparty/stickleback_v5_assembly.fa > /work/cyu/poolseq/PPalign_output/mapped/mtDNA_ROB.fa
+samtools faidx /work/cyu/poolseq/PPalign_output/mapped/mtDNA_ROB.fa
